@@ -30,17 +30,28 @@ export function convertHKDToUSD(amount: number): number {
 
 /**
  * Formats a number with K/M/B suffix if appropriate
+ * Handles negative numbers correctly
  */
 export function formatWithSuffix(amount: number): string {
-  if (amount >= 1000000000) {
-    return `$${(amount / 1000000000).toFixed(2)}B`;
-  } else if (amount >= 1000000) {
-    return `$${(amount / 1000000).toFixed(2)}M`;
-  } else if (amount >= 1000) {
-    return `$${(amount / 1000).toFixed(2)}K`;
+  const isNegative = amount < 0;
+  const absAmount = Math.abs(amount);
+
+  let formatted: string;
+
+  if (absAmount >= 1000000000) {
+    formatted = `${(absAmount / 1000000000).toFixed(2)}B`;
+  } else if (absAmount >= 1000000) {
+    formatted = `${(absAmount / 1000000).toFixed(2)}M`;
+  } else if (absAmount >= 1000) {
+    formatted = `${(absAmount / 1000).toFixed(2)}K`;
+  } else if (absAmount >= 1) {
+    formatted = absAmount.toFixed(2);
   } else {
-    return `$${amount.toFixed(2)}`;
+    // For very small amounts, show more precision
+    formatted = absAmount.toFixed(4).replace(/\.?0+$/, '');
   }
+
+  return isNegative ? `-$${formatted}` : `$${formatted}`;
 }
 
 /**
@@ -52,10 +63,17 @@ export function formatUSD(amount: number): string {
 
 /**
  * Formats a conversion result with both original and converted amounts
+ * @param hkdAmount - The original HKD amount
+ * @param showOriginal - Whether to show original amount (default: true)
  */
-export function formatConversion(hkdAmount: number): string {
+export function formatConversion(hkdAmount: number, showOriginal: boolean = true): string {
   const usdAmount = convertHKDToUSD(hkdAmount);
-  return `${formatUSD(usdAmount)} (was ${formatWithSuffix(hkdAmount)} HKD)`;
+
+  if (showOriginal) {
+    return `${formatUSD(usdAmount)} (${formatWithSuffix(hkdAmount)} HKD)`;
+  } else {
+    return formatUSD(usdAmount);
+  }
 }
 
 /**

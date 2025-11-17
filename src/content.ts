@@ -10,7 +10,7 @@ class GCPCurrencyConverter {
   private observer: MutationObserver | null = null;
   private processedNodes = new WeakSet<Node>();
   private originalTexts = new WeakMap<Node, string>();
-  private debounceTimer: number | null = null;
+  private debounceTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly DEBOUNCE_DELAY = 300; // ms
   private isEnabled = false;
   private toggleButton: HTMLElement | null = null;
@@ -74,7 +74,6 @@ class GCPCurrencyConverter {
     const checkbox = document.createElement('input');
     checkbox.type = 'checkbox';
     checkbox.style.cssText = 'opacity: 0; width: 0; height: 0;';
-    checkbox.addEventListener('change', () => this.toggleConversion(checkbox.checked));
 
     const slider = document.createElement('span');
     slider.style.cssText = `
@@ -112,15 +111,21 @@ class GCPCurrencyConverter {
     document.body.appendChild(container);
     this.toggleButton = container;
 
-    // Store references for toggle state
+    // Single event listener for both conversion and styling
     checkbox.addEventListener('change', () => {
-      if (checkbox.checked) {
+      const isChecked = checkbox.checked;
+
+      // Update toggle styling
+      if (isChecked) {
         slider.style.backgroundColor = '#1a73e8';
         sliderButton.style.transform = 'translateX(20px)';
       } else {
         slider.style.backgroundColor = '#ccc';
         sliderButton.style.transform = 'translateX(0)';
       }
+
+      // Trigger conversion
+      this.toggleConversion(isChecked);
     });
   }
 
@@ -159,7 +164,10 @@ class GCPCurrencyConverter {
         element.parentElement.replaceChild(textNode, element);
       }
     });
+
+    // Clear all tracking data structures
     this.processedNodes = new WeakSet<Node>();
+    this.originalTexts = new WeakMap<Node, string>();
   }
 
   /**
@@ -223,31 +231,42 @@ class GCPCurrencyConverter {
 
     // Regular expression to match currency patterns
     // Matches: $1,234.56 or $1.23K or $1M or $1B
-    const currencyPattern = /\$[\d,]+\.?\d*[KMB]?/gi;
-    const matches = text.match(currencyPattern);
+    // Improved pattern to handle edge cases like $0.50, $ 123
+    const currencyPattern = /\$\s*[\d,]*\.?\d+[KMB]?/gi;
+    const matches = Array.from(text.matchAll(currencyPattern));
 
-    if (!matches || matches.length === 0) {
+    if (matches.length === 0) {
       return;
     }
 
-    // Store original text
-    if (node.parentElement) {
-      this.originalTexts.set(node.parentElement, text);
-    }
-
-    // Replace each currency occurrence
-    let newText = text;
+    // Build new text by replacing each match
+    let newText = '';
+    let lastIndex = 0;
     let hasConversion = false;
 
     for (const match of matches) {
-      const amount = parseCurrencyAmount(match);
+      const matchText = match[0];
+      const matchIndex = match.index!;
+      const amount = parseCurrencyAmount(matchText);
+
+      // Add text before this match
+      newText += text.substring(lastIndex, matchIndex);
 
       if (amount !== null && amount > 0) {
+        // Add converted value
         const converted = formatConversion(amount);
-        newText = newText.replace(match, converted);
+        newText += converted;
         hasConversion = true;
+      } else {
+        // Keep original if conversion failed
+        newText += matchText;
       }
+
+      lastIndex = matchIndex + matchText.length;
     }
+
+    // Add remaining text after last match
+    newText += text.substring(lastIndex);
 
     // Update the DOM if conversions were made
     if (hasConversion && node.parentElement) {
@@ -257,7 +276,7 @@ class GCPCurrencyConverter {
       span.style.color = '#1a73e8'; // Google blue to indicate conversion
       span.title = 'Converted from HKD to USD';
 
-      // Store original text for restoration
+      // Store original text for restoration (only on span)
       this.originalTexts.set(span, text);
 
       node.parentElement.replaceChild(span, node);
@@ -328,28 +347,59 @@ class GCPCurrencyConverter {
    * Clean up resources
    */
   public destroy(): void {
+    // Disconnect mutation observer
     if (this.observer) {
       this.observer.disconnect();
       this.observer = null;
     }
 
+    // Clear debounce timer
     if (this.debounceTimer !== null) {
       clearTimeout(this.debounceTimer);
       this.debounceTimer = null;
     }
 
+    // Restore original values if conversion is enabled
+    if (this.isEnabled) {
+      this.restorePage();
+    }
+
+    // Remove toggle button from DOM
+    if (this.toggleButton && this.toggleButton.parentElement) {
+      this.toggleButton.parentElement.removeChild(this.toggleButton);
+      this.toggleButton = null;
+    }
+
+    // Reset state
+    this.isEnabled = false;
+
     console.log('[GCP Currency Converter] Extension destroyed');
   }
 }
 
+// Declare global interface for TypeScript
+declare global {
+  interface Window {
+    gcpCurrencyConverter?: GCPCurrencyConverter;
+  }
+}
+
 // Initialize the extension when the DOM is ready
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', () => {
-    const converter = new GCPCurrencyConverter();
-    converter.init();
-  });
-} else {
-  // DOM is already ready
+function initializeExtension(): void {
+  // Destroy existing instance if present
+  if (window.gcpCurrencyConverter) {
+    window.gcpCurrencyConverter.destroy();
+  }
+
+  // Create new instance and store globally
   const converter = new GCPCurrencyConverter();
   converter.init();
+  window.gcpCurrencyConverter = converter;
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initializeExtension);
+} else {
+  // DOM is already ready
+  initializeExtension();
 }
