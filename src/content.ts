@@ -1,5 +1,4 @@
 import {
-  isHKDCurrency,
   parseCurrencyAmount,
   formatConversion,
 } from './utils/currency';
@@ -10,8 +9,11 @@ import {
 class GCPCurrencyConverter {
   private observer: MutationObserver | null = null;
   private processedNodes = new WeakSet<Node>();
+  private originalTexts = new WeakMap<Node, string>();
   private debounceTimer: number | null = null;
   private readonly DEBOUNCE_DELAY = 300; // ms
+  private isEnabled = false;
+  private toggleButton: HTMLElement | null = null;
 
   constructor() {
     console.log('[GCP Currency Converter] Extension loaded');
@@ -21,8 +23,8 @@ class GCPCurrencyConverter {
    * Initialize the extension
    */
   public init(): void {
-    // Process existing content
-    this.processPage();
+    // Create toggle UI
+    this.createToggleUI();
 
     // Set up observer for dynamic content
     this.setupMutationObserver();
@@ -31,16 +33,143 @@ class GCPCurrencyConverter {
   }
 
   /**
-   * Process the entire page for HKD currency values
+   * Create toggle UI
+   */
+  private createToggleUI(): void {
+    const container = document.createElement('div');
+    container.id = 'gcp-currency-converter-toggle';
+    container.style.cssText = `
+      position: fixed;
+      top: 80px;
+      right: 20px;
+      z-index: 10000;
+      background: white;
+      border: 2px solid #1a73e8;
+      border-radius: 8px;
+      padding: 12px 16px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+      font-family: 'Google Sans', Arial, sans-serif;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    `;
+
+    const label = document.createElement('span');
+    label.textContent = 'HKD → USD';
+    label.style.cssText = `
+      font-size: 14px;
+      font-weight: 500;
+      color: #202124;
+    `;
+
+    const toggleSwitch = document.createElement('label');
+    toggleSwitch.style.cssText = `
+      position: relative;
+      display: inline-block;
+      width: 44px;
+      height: 24px;
+      cursor: pointer;
+    `;
+
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.style.cssText = 'opacity: 0; width: 0; height: 0;';
+    checkbox.addEventListener('change', () => this.toggleConversion(checkbox.checked));
+
+    const slider = document.createElement('span');
+    slider.style.cssText = `
+      position: absolute;
+      cursor: pointer;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: #ccc;
+      transition: .4s;
+      border-radius: 24px;
+    `;
+
+    const sliderButton = document.createElement('span');
+    sliderButton.style.cssText = `
+      position: absolute;
+      content: "";
+      height: 18px;
+      width: 18px;
+      left: 3px;
+      bottom: 3px;
+      background-color: white;
+      transition: .4s;
+      border-radius: 50%;
+    `;
+
+    slider.appendChild(sliderButton);
+    toggleSwitch.appendChild(checkbox);
+    toggleSwitch.appendChild(slider);
+
+    container.appendChild(label);
+    container.appendChild(toggleSwitch);
+
+    document.body.appendChild(container);
+    this.toggleButton = container;
+
+    // Store references for toggle state
+    checkbox.addEventListener('change', () => {
+      if (checkbox.checked) {
+        slider.style.backgroundColor = '#1a73e8';
+        sliderButton.style.transform = 'translateX(20px)';
+      } else {
+        slider.style.backgroundColor = '#ccc';
+        sliderButton.style.transform = 'translateX(0)';
+      }
+    });
+  }
+
+  /**
+   * Toggle conversion on/off
+   */
+  private toggleConversion(enabled: boolean): void {
+    this.isEnabled = enabled;
+    console.log(`[GCP Currency Converter] Conversion ${enabled ? 'enabled' : 'disabled'}`);
+
+    if (enabled) {
+      // Enable conversion - process the page
+      this.processPage();
+    } else {
+      // Disable conversion - restore original values
+      this.restorePage();
+    }
+  }
+
+  /**
+   * Process the entire page for currency values
    */
   private processPage(): void {
     this.processNode(document.body);
   }
 
   /**
-   * Process a single node and its children for HKD currency
+   * Restore original values
+   */
+  private restorePage(): void {
+    const convertedElements = document.querySelectorAll('[data-currency-converted="true"]');
+    convertedElements.forEach((element) => {
+      const originalText = this.originalTexts.get(element);
+      if (originalText && element.parentElement) {
+        const textNode = document.createTextNode(originalText);
+        element.parentElement.replaceChild(textNode, element);
+      }
+    });
+    this.processedNodes = new WeakSet<Node>();
+  }
+
+  /**
+   * Process a single node and its children for currency
    */
   private processNode(node: Node): void {
+    if (!this.isEnabled) {
+      return;
+    }
+
     // Skip if already processed
     if (this.processedNodes.has(node)) {
       return;
@@ -81,20 +210,29 @@ class GCPCurrencyConverter {
    * Process a text node for currency conversion
    */
   private processTextNode(node: Node): void {
-    const text = node.textContent || '';
-
-    // Check if text contains HKD currency
-    if (!isHKDCurrency(text)) {
+    if (!this.isEnabled) {
       return;
     }
 
-    // Regular expression to match HKD currency patterns
-    // Matches: HK$1,234.56 or 1,234.56 HKD or HKD 1,234.56
-    const currencyPattern = /(?:HK\$|HKD)\s*[\d,]+\.?\d*|[\d,]+\.?\d*\s*HKD/gi;
+    const text = node.textContent || '';
+
+    // Look for any $ sign (generic detection)
+    if (!text.includes('$')) {
+      return;
+    }
+
+    // Regular expression to match currency patterns
+    // Matches: $1,234.56 or $1.23K or $1M or $1B
+    const currencyPattern = /\$[\d,]+\.?\d*[KMB]?/gi;
     const matches = text.match(currencyPattern);
 
     if (!matches || matches.length === 0) {
       return;
+    }
+
+    // Store original text
+    if (node.parentElement) {
+      this.originalTexts.set(node.parentElement, text);
     }
 
     // Replace each currency occurrence
@@ -118,6 +256,9 @@ class GCPCurrencyConverter {
       span.setAttribute('data-currency-converted', 'true');
       span.style.color = '#1a73e8'; // Google blue to indicate conversion
       span.title = 'Converted from HKD to USD';
+
+      // Store original text for restoration
+      this.originalTexts.set(span, text);
 
       node.parentElement.replaceChild(span, node);
     }
@@ -151,10 +292,25 @@ class GCPCurrencyConverter {
    * Handle mutations detected by the observer
    */
   private handleMutations(mutations: MutationRecord[]): void {
+    if (!this.isEnabled) {
+      return;
+    }
+
     for (const mutation of mutations) {
+      // Skip mutations to our toggle button
+      if (mutation.target === this.toggleButton ||
+          (mutation.target as Element)?.closest?.('#gcp-currency-converter-toggle')) {
+        continue;
+      }
+
       // Handle added nodes
       if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
         for (const node of Array.from(mutation.addedNodes)) {
+          // Skip our toggle button
+          if (node === this.toggleButton ||
+              (node as Element)?.id === 'gcp-currency-converter-toggle') {
+            continue;
+          }
           this.processNode(node);
         }
       }
