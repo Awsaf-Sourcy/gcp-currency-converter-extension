@@ -29,18 +29,51 @@ export function convertHKDToUSD(amount: number): number {
 }
 
 /**
+ * Formats a number with K/M/B suffix if appropriate
+ * Handles negative numbers correctly
+ */
+export function formatWithSuffix(amount: number): string {
+  const isNegative = amount < 0;
+  const absAmount = Math.abs(amount);
+
+  let formatted: string;
+
+  if (absAmount >= 1000000000) {
+    formatted = `${(absAmount / 1000000000).toFixed(2)}B`;
+  } else if (absAmount >= 1000000) {
+    formatted = `${(absAmount / 1000000).toFixed(2)}M`;
+  } else if (absAmount >= 1000) {
+    formatted = `${(absAmount / 1000).toFixed(2)}K`;
+  } else if (absAmount >= 1) {
+    formatted = absAmount.toFixed(2);
+  } else {
+    // For very small amounts, show more precision
+    formatted = absAmount.toFixed(4).replace(/\.?0+$/, '');
+  }
+
+  return isNegative ? `-$${formatted}` : `$${formatted}`;
+}
+
+/**
  * Formats a USD amount with proper currency symbol and decimals
  */
 export function formatUSD(amount: number): string {
-  return `$${amount.toFixed(2)} USD`;
+  return `${formatWithSuffix(amount)} USD`;
 }
 
 /**
  * Formats a conversion result with both original and converted amounts
+ * @param hkdAmount - The original HKD amount
+ * @param showOriginal - Whether to show original amount (default: true)
  */
-export function formatConversion(hkdAmount: number): string {
+export function formatConversion(hkdAmount: number, showOriginal: boolean = true): string {
   const usdAmount = convertHKDToUSD(hkdAmount);
-  return `${formatUSD(usdAmount)} (was HK$${hkdAmount.toFixed(2)})`;
+
+  if (showOriginal) {
+    return `${formatUSD(usdAmount)} (${formatWithSuffix(hkdAmount)} HKD)`;
+  } else {
+    return formatUSD(usdAmount);
+  }
 }
 
 /**
@@ -64,17 +97,32 @@ export function performConversion(amount: number): ConversionResult {
 
 /**
  * Parses a currency string and extracts the numeric amount
- * Handles formats like: "HK$1,234.56", "1234.56 HKD", "HKD 1,234.56"
+ * Handles formats like: "$1,234.56", "$36.9K", "$1.12M", "$200K"
  */
 export function parseCurrencyAmount(text: string): number | null {
-  // Remove currency symbols and commas
-  const cleaned = text
-    .replace(/HK\$/gi, '')
+  // Remove currency symbols and spaces
+  let cleaned = text
+    .replace(/\$/g, '')
+    .replace(/HK/gi, '')
     .replace(/HKD/gi, '')
     .replace(/,/g, '')
     .trim();
 
-  const amount = parseFloat(cleaned);
+  // Handle K, M, B suffixes
+  let multiplier = 1;
+
+  if (cleaned.endsWith('K') || cleaned.endsWith('k')) {
+    multiplier = 1000;
+    cleaned = cleaned.slice(0, -1);
+  } else if (cleaned.endsWith('M') || cleaned.endsWith('m')) {
+    multiplier = 1000000;
+    cleaned = cleaned.slice(0, -1);
+  } else if (cleaned.endsWith('B') || cleaned.endsWith('b')) {
+    multiplier = 1000000000;
+    cleaned = cleaned.slice(0, -1);
+  }
+
+  const amount = parseFloat(cleaned) * multiplier;
 
   return isNaN(amount) ? null : amount;
 }
